@@ -141,31 +141,36 @@ def extract_text(file):
             text += para.text + '\n'
     return text
 
-# ---- New Functionality for Fee Comparison ----
-def extract_budget_from_excel(excel_file):
-    df = pd.read_excel(excel_file, sheet_name=None)
-    budget_df = df.get("Budget", pd.DataFrame())
-    return budget_df
-
-def compare_fees(budget_df):
-    standard_fees = {
+# --- Budget Check Logic ---
+def budget_check(doc):
+    standard_rates = {
         "Project Director": 1400,
         "Project Manager": 1200,
         "Consultant": 850,
-        "Analyst": 700,
+        "Analyst": 700
     }
 
-    recommendations = []
+    budget_section = ""
+    for para in doc.paragraphs:
+        if "budget" in para.text.lower():
+            budget_section += para.text + "\n"
 
-    if not budget_df.empty:
-        for role, standard_rate in standard_fees.items():
-            if role in budget_df.columns:
-                for index, value in budget_df[role].iteritems():
-                    if value > standard_rate:
-                        recommendations.append(f"The {role} rate is higher than the standard rate. Rate: {value} USD")
-                    elif value < standard_rate:
-                        recommendations.append(f"The {role} rate is lower than the standard rate. Rate: {value} USD")
-    return recommendations
+    budget_text = budget_section.lower()
+
+    role_keywords = ["project director", "project manager", "consultant", "analyst"]
+    role_rates = {role: standard_rates[role] for role in role_keywords}
+
+    rate_mismatches = []
+
+    for role, standard_rate in role_rates.items():
+        if role in budget_text:
+            match = re.search(rf"({role}).*?(\d+)", budget_text)
+            if match:
+                role_amount = int(match.group(2))
+                if role_amount != standard_rate:
+                    rate_mismatches.append(f"{role.capitalize()} rate of ${role_amount} does not match standard of ${standard_rate}.")
+
+    return rate_mismatches
 
 def evaluate_proposal(text, required_sections, doc):
     lower_text = text.lower()
@@ -179,6 +184,7 @@ def evaluate_proposal(text, required_sections, doc):
     section_percentage = (section_score / len(required_sections)) * 100
 
     formatting_results = formatting_check(doc)
+    budget_issues = budget_check(doc)
 
     total_score = 0
     max_score = 4
@@ -209,28 +215,8 @@ def evaluate_proposal(text, required_sections, doc):
         recommendations.append("Document should use font 'Tenorite' throughout.")
     if not formatting_results['font_size_ok']:
         recommendations.append("Body text should use font size 11.")
-
-    # ✨ Methodology Components Check ✨
-    methodology_components = [
-        "project kick-off", "project inception",
-        "desk review",
-        "data collection",
-        "data analysis", "data management",
-        "report development"
-    ]
-    methodology_text = "\n".join(
-        para.text for para in doc.paragraphs if "methodology" in para.text.lower()
-    ).lower()
-
-    missing_components = []
-    for comp in methodology_components:
-        if comp not in methodology_text:
-            missing_components.append(comp)
-
-    if missing_components:
-        recommendations.append(
-            f"The methodology section is missing the following components: {', '.join(set(missing_components)).title()}"
-        )
+    if budget_issues:
+        recommendations.extend(budget_issues)
 
     return {
         'sections': section_results,
@@ -239,65 +225,6 @@ def evaluate_proposal(text, required_sections, doc):
         'formatting': formatting_results
     }
 
-def formatting_check(doc):
-    spell = SpellChecker()
-    text = "\n".join([para.text for para in doc.paragraphs])
-    words = re.findall(r'\b\w+\b', text.lower())
-    misspelled = spell.unknown(words)
-    spelling_issues = list(misspelled)[:15]
-
-    font_ok = True
-    font_size_ok = True
-    for para in doc.paragraphs:
-        for run in para.runs:
-            if run.font.name and run.font.name.lower() != "tenorite":
-                font_ok = False
-            if run.font.size and run.font.size.pt != 11:
-                if para.style.name not in ['Heading 1', 'Heading 2', 'Heading 3']:
-                    font_size_ok = False
-        if not font_ok or not font_size_ok:
-            break
-
-    return {
-        "spelling_issues": spelling_issues,
-        "font_ok": font_ok,
-        "font_size_ok": font_size_ok
-    }
-
-def create_word_report(evaluation):
-    doc = Document()
-    doc.add_heading("Proposal Evaluation Report", level=1)
-
-    doc.add_heading("Section Check", level=2)
-    for section, found in evaluation['sections'].items():
-        doc.add_paragraph(f"{section}: {'Present' if found else 'Missing'}")
-
-    doc.add_heading("Formatting & Presentation", level=2)
-    if evaluation['formatting']['spelling_issues']:
-        doc.add_paragraph("Spelling Issues Detected:")
-        doc.add_paragraph(", ".join(evaluation['formatting']['spelling_issues']))
-    else:
-        doc.add_paragraph("No major spelling issues detected.")
-    if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
-        doc.add_paragraph("Font style and size meet organizational standards (Tenorite, size 11).")
-    else:
-        doc.add_paragraph("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
-
-    doc.add_heading("Overall Score", level=2)
-    doc.add_paragraph(f"{evaluation['score']}%")
-
-    doc.add_heading("Recommendations", level=2)
-    if evaluation['recommendations']:
-        for rec in evaluation['recommendations']:
-            doc.add_paragraph(f"- {rec}")
-    else:
-        doc.add_paragraph("All criteria met. Great job!")
-
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
-
 # --- Streamlit App Interface ---
 st.title("Proposal Toolkit")
 
@@ -305,18 +232,14 @@ app_mode = st.radio("Select Tool", ["Proposal Evaluator", "RFP Key Info Extracto
 
 if app_mode == "Proposal Evaluator":
     uploaded_proposal = st.file_uploader("Upload Proposal (.docx only)", type=["docx"])
-    uploaded_budget = st.file_uploader("Upload Budget (.xlsx only)", type=["xlsx"])
     evaluation = None
-    fee_recommendations = []
 
-    if uploaded_proposal and uploaded_budget and st.button("Evaluate Proposal"):
+    if uploaded_proposal and st.button("Evaluate Proposal"):
         st.success("Proposal uploaded successfully.")
         prop_text = extract_text(uploaded_proposal)
         doc = Document(uploaded_proposal)
         with st.spinner("Evaluating proposal..."):
             evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
-            fees = extract_budget_from_excel(uploaded_budget)
-            fee_recommendations = compare_fees(fees)
 
     if evaluation:
         st.subheader("Evaluation Results")
@@ -330,24 +253,46 @@ if app_mode == "Proposal Evaluator":
             st.write(", ".join(evaluation['formatting']['spelling_issues']))
         else:
             st.success("No major spelling issues detected.")
-        
-        st.write("### Score")
-        st.write(f"Overall Score: {evaluation['score']}%")
-        
+
+        if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
+            st.success("Font style and size meet organizational standards (Tenorite, size 11).")
+        else:
+            st.warning("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
+
+        st.write(f"### Overall Score: **{evaluation['score']}%**")
+
         st.write("### Recommendations")
-        for rec in evaluation['recommendations']:
-            st.write(f"- {rec}")
-        
-        st.write("### Fee Recommendations")
-        for rec in fee_recommendations:
-            st.write(f"- {rec}")
+        if evaluation['recommendations']:
+            for rec in evaluation['recommendations']:
+                st.warning(rec)
+        else:
+            st.success("Your proposal aligns well with the standards!")
+
+        word_buffer = create_word_report(evaluation)
+        st.download_button(
+            label="Download Evaluation Report (.docx)",
+            data=word_buffer,
+            file_name="proposal_evaluation.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 
 elif app_mode == "RFP Key Info Extractor":
-    st.write("Upload RFP Document (.pdf or .docx)")
-    uploaded_rfp = st.file_uploader("Upload RFP", type=["pdf", "docx"])
-    if uploaded_rfp:
-        file_type = "pdf" if uploaded_rfp.name.endswith('.pdf') else "docx"
-        rfp_category, extracted_info = process_rfp(uploaded_rfp, file_type)
-        st.write(f"**RFP Category**: {rfp_category}")
-        st.dataframe(extracted_info)
-        st.download_button("Download Report", save_to_word(rfp_category, extracted_info), file_name="RFP_Report.docx")
+    uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx"])
+    if uploaded_file is not None:
+        file_type = uploaded_file.name.split('.')[-1].lower()
+        if file_type not in ["pdf", "docx"]:
+            st.error("Unsupported file type. Please upload a PDF or Word document.")
+        else:
+            rfp_category, df = process_rfp(uploaded_file, file_type)
+            st.write("### RFP Category")
+            st.success(rfp_category)
+            st.write("### Extracted Information")
+            st.dataframe(df)
+
+            buffer = save_to_word(rfp_category, df)
+            st.download_button(
+                "Download Extracted Info as Word",
+                buffer,
+                file_name="rfp_extracted_info.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
