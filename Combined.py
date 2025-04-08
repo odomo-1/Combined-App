@@ -313,8 +313,8 @@ def set_bg_image(image_file_name):
             <style>
             .stApp {{
                 background-image: linear-gradient(
-                    rgba(255, 255, 255, 0.91),
-                    rgba(255, 255, 255, 0.91)
+                    rgba(255, 255, 255, 0.94),
+                    rgba(255, 255, 255, 0.94)
                 ), url("data:image/jpg;base64,{encoded_string}");
                 background-attachment: fixed;
                 background-size: cover;
