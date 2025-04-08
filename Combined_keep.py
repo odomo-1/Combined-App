@@ -9,6 +9,7 @@ from spellchecker import SpellChecker
 import pandas as pd
 import spacy
 from pdfminer.high_level import extract_text
+import base64
 
 # --- Constants ---
 STANDARD_SECTIONS = [
@@ -244,11 +245,14 @@ def formatting_check(doc):
     font_size_ok = True
     for para in doc.paragraphs:
         for run in para.runs:
-            if run.font.name and run.font.name.lower() != "tenorite" or run.font.name.lower() != "candara":
+            # Check if font name is not None before calling .lower()
+            if run.font.name and run.font.name.lower() not in ["tenorite", "candara"]:
                 font_ok = False
+            # Check if font size is not None before comparing
             if run.font.size and run.font.size.pt != 11:
                 if para.style.name not in ['Heading 1', 'Heading 2', 'Heading 3']:
                     font_size_ok = False
+        # Break early if any issue is found
         if not font_ok or not font_size_ok:
             break
 
@@ -295,6 +299,36 @@ def create_word_report(evaluation):
 # --- Streamlit App Interface ---
 st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", layout="wide")
 
+# Custom CSS for background image
+
+def set_bg_image(image_file_name):
+    # Get absolute path for image
+    current_dir = os.path.dirname(__file__)
+    image_path = os.path.join(current_dir, image_file_name)
+
+    with open(image_path, "rb") as file:
+        encoded_string = base64.b64encode(file.read()).decode()
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                background-image: linear-gradient(
+                    rgba(255, 255, 255, 0.94),
+                    rgba(255, 255, 255, 0.94)
+                ), url("data:image/jpg;base64,{encoded_string}");
+                background-attachment: fixed;
+                background-size: cover;
+                background-repeat: no-repeat;
+                background-position: center;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# Set the background
+set_bg_image("background.jpg")
 # Display the company logo
 logo_path = "Sahel Consulting (Official).png"  # Update the path to your logo file
 st.image(logo_path, width=300)  # Adjust the width as needed
@@ -371,3 +405,4 @@ elif app_mode == "RFP Key Info Extractor":
                 file_name="rfp_extracted_info.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
+
