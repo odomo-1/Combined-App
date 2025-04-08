@@ -9,6 +9,9 @@ from spellchecker import SpellChecker
 import pandas as pd
 import spacy
 from pdfminer.high_level import extract_text
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 
 # --- Constants ---
 STANDARD_SECTIONS = [
@@ -89,11 +92,11 @@ def process_rfp(file, file_type):
     rfp_category = categorize_rfp(text)
 
     scope_keywords = ["Scope", "Description", "Objective", "Goals", "Deliverables", "Statement of Work"]
-    methodology_keywords = ["Methodology", "Approach", "Strategy", "Plan", "Implementation", "Execution", "Framework", "Process", "Techniques", "Procedures"]
-    eligibility_keywords = ["Eligibility", "Eligible", "Applicants", "Who can apply", "Requirements", "Qualifications", "Criteria", "Conditions", "Target Audience"]
-    budget_keywords = ["Budget", "Funding", "Cost", "Financial", "Expenses", "Price", "Pricing", "Allocation", "Payment Terms"]
-    deadline_keywords = ["Deadline", "Submission", "Due Date", "Timeline", "Schedule", "Important Dates"]
-    selection_process_keywords = ["Selection", "Evaluation", "Criteria", "Process", "Weighting", "Judging", "Metrics", "Assessment", "Decision"]
+    methodology_keywords = ["Methodology", "Approach", "Strategy", "Implementation", "Framework", "Techniques"]
+    eligibility_keywords = ["Eligibility", "Eligible", "Applicants", "Who can apply", "Requirements", "Qualifications", "Criteria"]
+    budget_keywords = ["Budget", "Funding", "Cost", "Financial", "Expenses"]
+    deadline_keywords = ["Deadline", "Submission", "Due Date", "Closing Date"]
+    selection_process_keywords = ["Selection", "Weighting", "Judging", "Metrics","Decision"]
 
     assigned_sentences = set()
 
@@ -107,7 +110,7 @@ def process_rfp(file, file_type):
             "\n".join(extract_sentences_with_keywords(text, methodology_keywords, assigned_sentences)),
             "\n".join(extract_sentences_with_keywords(text, eligibility_keywords, assigned_sentences)),
             "\n".join(extract_sentences_with_keywords(text, budget_keywords, assigned_sentences)),
-            "\n".join(extract_named_entities(text, nlp, "DATE", assigned_sentences)),
+            "\n".join(extract_sentences_with_keywords(text, deadline_keywords, assigned_sentences)),
             "\n".join(extract_sentences_with_keywords(text, selection_process_keywords, assigned_sentences)),
         ]
     }
@@ -291,7 +294,15 @@ def create_word_report(evaluation):
     return buffer
 
 # --- Streamlit App Interface ---
-st.title("Proposal Toolkit")
+st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", layout="wide")
+
+# Display the company logo
+logo_path = "Sahel Consulting (Official).png"  # Update the path to your logo file
+st.image(logo_path, width=300)  # Adjust the width as needed
+
+st.title("Strategy Unit Toolkit")
+st.subheader("Welcome to the Strategy Unit Toolkit!")
+st.write("This toolkit is designed to assist you in evaluating proposals and extracting key information from RFPs.")
 
 app_mode = st.radio("Select Tool", ["Proposal Evaluator", "RFP Key Info Extractor"])
 
@@ -353,6 +364,7 @@ elif app_mode == "RFP Key Info Extractor":
             st.success(rfp_category)
             st.write("### Extracted Information")
             st.dataframe(df)
+
 
             buffer = save_to_word(rfp_category, df)
             st.download_button(

@@ -1,0 +1,10 @@
+credentials:
+  usernames:
+    odunayo:
+      name: Odunayo
+      password: 'strategy_toolkit'  # Hashed password for "strategy toolkit"
+
+cookie:
+  name: app_cookie
+  key: random_key
+  expiry_days: 30
