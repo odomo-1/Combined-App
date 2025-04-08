@@ -9,6 +9,7 @@ from spellchecker import SpellChecker
 import pandas as pd
 import spacy
 from pdfminer.high_level import extract_text
+import base64
 
 # --- Constants ---
 STANDARD_SECTIONS = [
@@ -61,9 +62,9 @@ def extract_named_entities(text, nlp, label, assigned_sentences):
 def categorize_rfp(text):
     grant_keywords = ["grant", "funding", "donation", "philanthropy", "financial aid"]
     investment_keywords = ["investment", "capital", "funding", "venture", "equity"]
-    assessment_keywords = ["assessment", "evaluation", "review", "impact", "audit"]
+    assessment_keywords = ["assessment","asses", "evaluation", "review", "impact", "audit"]
     market_research_keywords = ["market research", "consumer research", "market analysis", "industry study", "market survey"]
-
+    policy_keywords = ["policy", "governance","regulation", "guideline", "legislation"]
     if any(re.search(r'\b' + keyword + r'\b', text, re.IGNORECASE) for keyword in grant_keywords):
         return "Grant"
     elif any(re.search(r'\b' + keyword + r'\b', text, re.IGNORECASE) for keyword in investment_keywords):
@@ -72,6 +73,8 @@ def categorize_rfp(text):
         return "Assessment"
     elif any(re.search(r'\b' + keyword + r'\b', text, re.IGNORECASE) for keyword in market_research_keywords):
         return "Market Research"
+    elif any(re.search(r'\b' + keyword + r'\b', text, re.IGNORECASE) for keyword in policy_keywords):
+        return "Policy Development"
     else:
         return "Uncategorized"
 
@@ -88,11 +91,11 @@ def process_rfp(file, file_type):
 
     rfp_category = categorize_rfp(text)
 
-    scope_keywords = ["Scope", "Description", "Objective", "Goals", "Deliverables", "Statement of Work"]
-    methodology_keywords = ["Methodology", "Approach", "Strategy", "Implementation", "Framework", "Techniques"]
-    eligibility_keywords = ["Eligibility", "Eligible", "Applicants", "Who can apply", "Requirements", "Qualifications", "Criteria"]
+    scope_keywords = ["Scope", "Description", "Background", "Objectives","expected deliverables","objective", "Goals", "Deliverables","output", "outcome" , "Statement of Work","proposal format"]
+    methodology_keywords = ["Methodology", "Approach","activities", "Strategy", "Implementation", "Framework", "Techniques"]
+    eligibility_keywords = ["Eligibility", "team", "Eligible", "Applicants", "Who can apply", "Requirements", "Qualifications", "Criteria"]
     budget_keywords = ["Budget", "Funding", "Cost", "Financial", "Expenses"]
-    deadline_keywords = ["Deadline", "Submission", "Due Date", "Closing Date"]
+    deadline_keywords = ["Deadline", "Submission", "Due Date", "Closing Date", "duration"]
     selection_process_keywords = ["Selection", "Weighting", "Judging", "Metrics","Decision"]
 
     assigned_sentences = set()
@@ -206,7 +209,7 @@ def evaluate_proposal(text, required_sections, doc):
     if formatting_results['spelling_issues']:
         recommendations.append("Spelling issues found in the document.")
     if not formatting_results['font_ok']:
-        recommendations.append("Document should use font 'Tenorite' throughout.")
+        recommendations.append("Document should use font 'Tenorite' or 'Candara' throughout.")
     if not formatting_results['font_size_ok']:
         recommendations.append("Body text should use font size 11.")
     methodology_text = "\n".join(
@@ -242,11 +245,14 @@ def formatting_check(doc):
     font_size_ok = True
     for para in doc.paragraphs:
         for run in para.runs:
-            if run.font.name and run.font.name.lower() != "tenorite":
+            # Check if font name is not None before calling .lower()
+            if run.font.name and run.font.name.lower() not in ["tenorite", "candara"]:
                 font_ok = False
+            # Check if font size is not None before comparing
             if run.font.size and run.font.size.pt != 11:
                 if para.style.name not in ['Heading 1', 'Heading 2', 'Heading 3']:
                     font_size_ok = False
+        # Break early if any issue is found
         if not font_ok or not font_size_ok:
             break
 
@@ -271,9 +277,9 @@ def create_word_report(evaluation):
     else:
         doc.add_paragraph("No major spelling issues detected.")
     if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
-        doc.add_paragraph("Font style and size meet organizational standards (Tenorite, size 11).")
+        doc.add_paragraph("Font style and size meet organizational standards (Tenorite or Candara, size 11).")
     else:
-        doc.add_paragraph("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
+        doc.add_paragraph("Font style does not match standard (Tenorite or Candara) or font size is not 11 in body text.")
 
     doc.add_heading("Overall Score", level=2)
     doc.add_paragraph(f"{evaluation['score']}%")
@@ -293,13 +299,38 @@ def create_word_report(evaluation):
 # --- Streamlit App Interface ---
 st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", layout="wide")
 
+# Custom CSS for background image
+
+def set_bg_image(image_file):
+    with open(image_file, "rb") as file:
+        encoded_string = base64.b64encode(file.read()).decode()
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                background-image: linear-gradient(
+                    rgba(255, 255, 255, 0.92),  /* Dark overlay: adjust opacity here */
+                    rgba(255, 255, 255, 0.92)
+                ), url("data:image/jpg;base64,{encoded_string}");
+                background-attachment: fixed;
+                background-size: cover;
+                background-repeat: no-repeat;
+                background-position: center;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# Set the background
+set_bg_image("background.jpg")
 # Display the company logo
 logo_path = "Sahel Consulting (Official).png"  # Update the path to your logo file
 st.image(logo_path, width=300)  # Adjust the width as needed
 
-st.title("Strategy Unit Toolkit")
-st.subheader("Welcome to the Strategy Unit Toolkit!")
-st.write("This toolkit is designed to assist you in evaluating proposals and extracting key information from RFPs.")
+st.title(":green[Strategy Unit Toolkit]")
+st.write(":orange[Welcome to the Strategy Unit Toolkit!  This toolkit is designed to assist you in evaluating proposals and extracting key information from RFPs.]")
 
 app_mode = st.radio("Select Tool", ["Proposal Evaluator", "RFP Key Info Extractor"])
 
@@ -328,9 +359,9 @@ if app_mode == "Proposal Evaluator":
             st.success("No major spelling issues detected.")
 
         if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
-            st.success("Font style and size meet organizational standards (Tenorite, size 11).")
+            st.success("Font style and size meet organizational standards (Tenorite or Candara, size 11).")
         else:
-            st.warning("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
+            st.warning("Font style does not match standard (Tenorite or Candara) or font size is not 11 in body text.")
 
         st.write(f"### Overall Score: **{round(evaluation['score'])}%**")
 
@@ -370,3 +401,4 @@ elif app_mode == "RFP Key Info Extractor":
                 file_name="rfp_extracted_info.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
+
