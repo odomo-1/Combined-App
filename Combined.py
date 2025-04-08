@@ -301,16 +301,20 @@ st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", 
 
 # Custom CSS for background image
 
-def set_bg_image(image_file):
-    with open(image_file, "rb") as file:
+def set_bg_image(image_file_name):
+    # Get absolute path for image
+    current_dir = os.path.dirname(__file__)
+    image_path = os.path.join(current_dir, image_file_name)
+
+    with open(image_path, "rb") as file:
         encoded_string = base64.b64encode(file.read()).decode()
         st.markdown(
             f"""
             <style>
             .stApp {{
                 background-image: linear-gradient(
-                    rgba(255, 255, 255, 0.92),  /* Dark overlay: adjust opacity here */
-                    rgba(255, 255, 255, 0.92)
+                    rgba(255, 255, 255, 0.91),
+                    rgba(255, 255, 255, 0.91)
                 ), url("data:image/jpg;base64,{encoded_string}");
                 background-attachment: fixed;
                 background-size: cover;
