@@ -12,11 +12,11 @@ from pdfminer.high_level import extract_text
 
 # --- Constants ---
 STANDARD_SECTIONS = [
-    "Table of content",
+    "Table of content" or "Table of Contents" or "contents" or "Content",
     "Introduction",
     "Background",
     "Objective",
-    "Methodology" or "Approach",
+    "Methodology" or "Approach" or "technical approach",
     "Project Team",
     "About Sahel",
     "Budget",
@@ -155,22 +155,48 @@ def evaluate_proposal(text, required_sections, doc):
     formatting_results = formatting_check(doc)
 
     total_score = 0
-    max_score = 4
+    max_score = 100  # Base total
 
-    total_score += section_percentage * 0.50
+    # ✨ Methodology Components Check ✨
+    methodology_components = [
+        "project kick-off"or "project inception",
+        "desk review",
+        "data collection",
+        "data analysis", "data management",
+        "report development",
+        "Deliverables"or "Deliverable" or "output" or "outputs"
+    ]
 
-    spell_score = 0
-    if len(formatting_results['spelling_issues']) == 0:
-        spell_score = 100
-    else:
-        spell_score = max(0, 100 - len(formatting_results['spelling_issues']) * 10)
-    total_score += spell_score * 0.25
+    # Section completeness: 35%
+    section_weight = 0.35
+    total_score += section_percentage * section_weight
 
+    # Spelling check: 20%
+    spelling_weight = 0.20
+    spell_score = 100 if not formatting_results['spelling_issues'] else max(0, 100 - len(formatting_results['spelling_issues']) * 10)
+    total_score += spell_score * spelling_weight
+
+    # Methodology check: 25%
+    methodology_weight = 0.25
+    methodology_score = 100 if methodology_components else 0
+    
+    total_score += methodology_score * methodology_weight
+
+    # Formatting: Font style and font size (20% total, split evenly)
+    formatting_weight = 0.20
     font_style_score = 100 if formatting_results['font_ok'] else 0
     font_size_score = 100 if formatting_results['font_size_ok'] else 0
-    total_score += (font_style_score + font_size_score) * 0.25
+    formatting_score = (font_style_score + font_size_score) / 2
+    total_score += round(formatting_score * formatting_weight)
 
-    total_score = round(total_score)
+    # ✨ Methodology Components Check ✨
+    methodology_components = [
+        "project kick-off", "project inception",
+        "desk review",
+        "data collection",
+        "data analysis", "data management",
+        "report development"
+    ]
 
     # Recommendations
     missing_sections = [sec for sec, present in section_results.items() if not present]
@@ -183,17 +209,8 @@ def evaluate_proposal(text, required_sections, doc):
         recommendations.append("Document should use font 'Tenorite' throughout.")
     if not formatting_results['font_size_ok']:
         recommendations.append("Body text should use font size 11.")
-
-    # ✨ Methodology Components Check ✨
-    methodology_components = [
-        "project kick-off", "project inception",
-        "desk review",
-        "data collection",
-        "data analysis", "data management",
-        "report development"
-    ]
     methodology_text = "\n".join(
-        para.text for para in doc.paragraphs if "methodology" in para.text.lower()
+        para.text for para in doc.paragraphs if "methodology" or "Approach" or "technical approach" in para.text.lower()
     ).lower()
 
     missing_components = []
@@ -307,7 +324,7 @@ if app_mode == "Proposal Evaluator":
         else:
             st.warning("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
 
-        st.write(f"### Overall Score: **{evaluation['score']}%**")
+        st.write(f"### Overall Score: **{round(evaluation['score'])}%**")
 
         st.write("### Recommendations")
         if evaluation['recommendations']:

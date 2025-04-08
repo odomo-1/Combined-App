@@ -12,11 +12,11 @@ from pdfminer.high_level import extract_text
 
 # --- Constants ---
 STANDARD_SECTIONS = [
-    "Table of content",
+    "Table of content" or "Table of Contents" or "contents" or "Content",
     "Introduction",
     "Background",
     "Objective",
-    "Methodology" or "Approach",
+    "Methodology" or "Approach" or "technical approach",
     "Project Team",
     "About Sahel",
     "Budget",
@@ -141,37 +141,6 @@ def extract_text(file):
             text += para.text + '\n'
     return text
 
-# --- Budget Check Logic ---
-def budget_check(doc):
-    standard_rates = {
-        "Project Director": 1400,
-        "Project Manager": 1200,
-        "Consultant": 850,
-        "Analyst": 700
-    }
-
-    budget_section = ""
-    for para in doc.paragraphs:
-        if "budget" in para.text.lower():
-            budget_section += para.text + "\n"
-
-    budget_text = budget_section.lower()
-
-    role_keywords = ["project director", "project manager", "consultant", "analyst"]
-    role_rates = {role: standard_rates[role] for role in role_keywords}
-
-    rate_mismatches = []
-
-    for role, standard_rate in role_rates.items():
-        if role in budget_text:
-            match = re.search(rf"({role}).*?(\d+)", budget_text)
-            if match:
-                role_amount = int(match.group(2))
-                if role_amount != standard_rate:
-                    rate_mismatches.append(f"{role.capitalize()} rate of ${role_amount} does not match standard of ${standard_rate}.")
-
-    return rate_mismatches
-
 def evaluate_proposal(text, required_sections, doc):
     lower_text = text.lower()
 
@@ -184,25 +153,50 @@ def evaluate_proposal(text, required_sections, doc):
     section_percentage = (section_score / len(required_sections)) * 100
 
     formatting_results = formatting_check(doc)
-    budget_issues = budget_check(doc)
 
     total_score = 0
-    max_score = 4
+    max_score = 100  # Base total
 
-    total_score += section_percentage * 0.50
+    # ✨ Methodology Components Check ✨
+    methodology_components = [
+        "project kick-off"or "project inception",
+        "desk review",
+        "data collection",
+        "data analysis", "data management",
+        "report development",
+        "Deliverables"or "Deliverable" or "output" or "outputs"
+    ]
 
-    spell_score = 0
-    if len(formatting_results['spelling_issues']) == 0:
-        spell_score = 100
-    else:
-        spell_score = max(0, 100 - len(formatting_results['spelling_issues']) * 10)
-    total_score += spell_score * 0.25
+    # Section completeness: 35%
+    section_weight = 0.35
+    total_score += section_percentage * section_weight
 
+    # Spelling check: 20%
+    spelling_weight = 0.20
+    spell_score = 100 if not formatting_results['spelling_issues'] else max(0, 100 - len(formatting_results['spelling_issues']) * 10)
+    total_score += spell_score * spelling_weight
+
+    # Methodology check: 25%
+    methodology_weight = 0.25
+    methodology_score = 100 if methodology_components else 0
+    
+    total_score += methodology_score * methodology_weight
+
+    # Formatting: Font style and font size (20% total, split evenly)
+    formatting_weight = 0.20
     font_style_score = 100 if formatting_results['font_ok'] else 0
     font_size_score = 100 if formatting_results['font_size_ok'] else 0
-    total_score += (font_style_score + font_size_score) * 0.25
+    formatting_score = (font_style_score + font_size_score) / 2
+    total_score += round(formatting_score * formatting_weight)
 
-    total_score = round(total_score)
+    # ✨ Methodology Components Check ✨
+    methodology_components = [
+        "project kick-off", "project inception",
+        "desk review",
+        "data collection",
+        "data analysis", "data management",
+        "report development"
+    ]
 
     # Recommendations
     missing_sections = [sec for sec, present in section_results.items() if not present]
@@ -215,8 +209,19 @@ def evaluate_proposal(text, required_sections, doc):
         recommendations.append("Document should use font 'Tenorite' throughout.")
     if not formatting_results['font_size_ok']:
         recommendations.append("Body text should use font size 11.")
-    if budget_issues:
-        recommendations.extend(budget_issues)
+    methodology_text = "\n".join(
+        para.text for para in doc.paragraphs if "methodology" or "Approach" or "technical approach" in para.text.lower()
+    ).lower()
+
+    missing_components = []
+    for comp in methodology_components:
+        if comp not in methodology_text:
+            missing_components.append(comp)
+
+    if missing_components:
+        recommendations.append(
+            f"The methodology section is missing the following components: {', '.join(set(missing_components)).title()}"
+        )
 
     return {
         'sections': section_results,
@@ -224,6 +229,66 @@ def evaluate_proposal(text, required_sections, doc):
         'recommendations': recommendations,
         'formatting': formatting_results
     }
+
+
+def formatting_check(doc):
+    spell = SpellChecker()
+    text = "\n".join([para.text for para in doc.paragraphs])
+    words = re.findall(r'\b\w+\b', text.lower())
+    misspelled = spell.unknown(words)
+    spelling_issues = list(misspelled)[:15]
+
+    font_ok = True
+    font_size_ok = True
+    for para in doc.paragraphs:
+        for run in para.runs:
+            if run.font.name and run.font.name.lower() != "tenorite":
+                font_ok = False
+            if run.font.size and run.font.size.pt != 11:
+                if para.style.name not in ['Heading 1', 'Heading 2', 'Heading 3']:
+                    font_size_ok = False
+        if not font_ok or not font_size_ok:
+            break
+
+    return {
+        "spelling_issues": spelling_issues,
+        "font_ok": font_ok,
+        "font_size_ok": font_size_ok
+    }
+
+def create_word_report(evaluation):
+    doc = Document()
+    doc.add_heading("Proposal Evaluation Report", level=1)
+
+    doc.add_heading("Section Check", level=2)
+    for section, found in evaluation['sections'].items():
+        doc.add_paragraph(f"{section}: {'Present' if found else 'Missing'}")
+
+    doc.add_heading("Formatting & Presentation", level=2)
+    if evaluation['formatting']['spelling_issues']:
+        doc.add_paragraph("Spelling Issues Detected:")
+        doc.add_paragraph(", ".join(evaluation['formatting']['spelling_issues']))
+    else:
+        doc.add_paragraph("No major spelling issues detected.")
+    if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
+        doc.add_paragraph("Font style and size meet organizational standards (Tenorite, size 11).")
+    else:
+        doc.add_paragraph("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
+
+    doc.add_heading("Overall Score", level=2)
+    doc.add_paragraph(f"{evaluation['score']}%")
+
+    doc.add_heading("Recommendations", level=2)
+    if evaluation['recommendations']:
+        for rec in evaluation['recommendations']:
+            doc.add_paragraph(f"- {rec}")
+    else:
+        doc.add_paragraph("All criteria met. Great job!")
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
 # --- Streamlit App Interface ---
 st.title("Proposal Toolkit")
@@ -259,7 +324,7 @@ if app_mode == "Proposal Evaluator":
         else:
             st.warning("Font style does not match standard (Tenorite) or font size is not 11 in body text.")
 
-        st.write(f"### Overall Score: **{evaluation['score']}%**")
+        st.write(f"### Overall Score: **{round(evaluation['score'])}%**")
 
         st.write("### Recommendations")
         if evaluation['recommendations']:
