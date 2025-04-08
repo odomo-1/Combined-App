@@ -9,9 +9,6 @@ from spellchecker import SpellChecker
 import pandas as pd
 import spacy
 from pdfminer.high_level import extract_text
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 
 # --- Constants ---
 STANDARD_SECTIONS = [
