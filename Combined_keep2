@@ -9,7 +9,6 @@ from spellchecker import SpellChecker
 import pandas as pd
 import base64
 import fitz  # PyMuPDF for PDF parsing
-from fuzzywuzzy import fuzz
 
 # --- Constants ---
 STANDARD_SECTIONS = [
@@ -52,52 +51,22 @@ def extract_text_from_rfp(file):
     return text
 
 def extract_rfp_expectations(text):
-    """Extract expectations from the RFP with section headings for context."""
-    import re
-
     expectations = []
-    keywords = ["deliverable", "budget", "timeline", "expected", "scope of work", "methodology", "objective", "goal", "requirements", "outcomes"]
-
-    current_section = "General"
-    paragraphs = text.split("\n")  # Split text into paragraphs
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:  # Skip empty paragraphs
-            continue
-
-        # Detect section headings
-        if para.endswith(":") or para.isupper() or len(para.split()) <= 5 and any(k in para.lower() for k in ["objective", "scope", "deliverable", "budget", "timeline"]):
-            current_section = para.strip(":").title()
-        elif any(k in para.lower() for k in keywords):  # Detect expectations
-            summarized = " ".join(para.split()[:25]) + ("..." if len(para.split()) > 25 else "")  # Summarize to 25 words
-            expectations.append({"section": current_section, "expectation": summarized})
-
-    return expectations
+    keywords = ["deliverable", "expected", "scope of work", "objective", "goal", "requirements", "outcomes"]
+    for line in text.split("\n"):
+        if any(k in line.lower() for k in keywords):
+            expectations.append(line.strip())
+    return list(set(expectations))
 
 def check_expectations_coverage(expectations, proposal_text):
-    """Check if expectations from the RFP are addressed in the proposal using fuzzy matching."""
     missing = []
     addressed = []
-    proposal_paragraphs = proposal_text.split("\n")  # Split proposal into paragraphs
-
+    proposal_text_lower = proposal_text.lower()
     for exp in expectations:
-        exp_text = exp["expectation"].lower()
-        best_match_score = 0
-
-        # Compare the expectation with each paragraph in the proposal
-        for para in proposal_paragraphs:
-            para_text = para.lower()
-            match_score = fuzz.partial_ratio(exp_text, para_text)
-            if match_score > best_match_score:
-                best_match_score = match_score
-
-        # Determine if the expectation is addressed based on a threshold
-        if best_match_score >= 70:  # Threshold for alignment
-            addressed.append({"expectation": exp})
+        if exp.lower() in proposal_text_lower:
+            addressed.append(exp)
         else:
-            missing.append({"expectation": exp})
-
+            missing.append(exp)
     score = (len(addressed) / len(expectations)) * 100 if expectations else 0
     return score, addressed, missing
 
@@ -193,12 +162,10 @@ def create_word_report(evaluation, rfp_score=None, rfp_missing=None):
     doc = Document()
     doc.add_heading("Proposal Evaluation Report", level=1)
 
-    # Section Check
     doc.add_heading("Section Check", level=2)
     for section, found in evaluation['sections'].items():
         doc.add_paragraph(f"{section}: {'Present' if found else 'Missing'}")
 
-    # Formatting & Presentation
     doc.add_heading("Formatting & Presentation", level=2)
     if evaluation['formatting']['spelling_issues']:
         doc.add_paragraph("Spelling Issues Detected:")
@@ -210,11 +177,9 @@ def create_word_report(evaluation, rfp_score=None, rfp_missing=None):
     else:
         doc.add_paragraph("Font style does not match standard (Tenorite or Candara) or font size is not 11 in body text.")
 
-    # Overall Score
     doc.add_heading("Overall Score", level=2)
     doc.add_paragraph(f"{evaluation['score']}%")
 
-    # Recommendations
     doc.add_heading("Recommendations", level=2)
     if evaluation['recommendations']:
         for rec in evaluation['recommendations']:
@@ -222,16 +187,13 @@ def create_word_report(evaluation, rfp_score=None, rfp_missing=None):
     else:
         doc.add_paragraph("All criteria met. Great job!")
 
-    # Include Missing Expectations in Recommendations
-    if rfp_score is not None and rfp_missing:
-        doc.add_heading("Missing RFP Expectations", level=2)
-        doc.add_paragraph("The following expectations from the RFP were not addressed in the proposal:")
-        for miss in rfp_missing:
-            # Handle cases where `miss` is not a dictionary
-            if isinstance(miss, dict) and 'expectation' in miss and 'section' in miss['expectation']:
-                doc.add_paragraph(f"- {miss['expectation']['expectation']} (Section: {miss['expectation']['section']})")
-            else:
-                doc.add_paragraph(f"- {miss}")  # Fallback for unexpected data
+    if rfp_score is not None:
+        doc.add_heading("RFP Alignment", level=2)
+        doc.add_paragraph(f"RFP Coverage Score: {round(rfp_score)}%")
+        if rfp_missing:
+            doc.add_paragraph("Missing RFP Expectations:")
+            for miss in rfp_missing:
+                doc.add_paragraph(f"- {miss}")
 
     buffer = BytesIO()
     doc.save(buffer)
@@ -262,94 +224,61 @@ st.image("Sahel Consulting (Official).png", width=300)
 st.title(":green[Strategy Unit Toolkit]")
 st.write(":orange[Welcome! Upload the Proposal and RFP to evaluate alignment and quality.]")
 
-# File Uploaders
 uploaded_proposal = st.file_uploader("Upload Proposal (.docx only)", type=["docx"])
 uploaded_rfp = st.file_uploader("Upload RFP (.docx or .pdf)", type=["docx", "pdf"])
-
-# Initialize variables
 evaluation = None
 rfp_score = None
 rfp_missing = []
-rfp_addressed = []
-org_score = None
 
-# --- Evaluate Proposal ---
 if uploaded_proposal and st.button("Evaluate Proposal"):
     st.success("Proposal uploaded successfully.")
     prop_text = extract_text(uploaded_proposal)
     doc = Document(uploaded_proposal)
+    with st.spinner("Evaluating proposal..."):
+        evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
 
-    # Part 1: RFP Alignment
     if uploaded_rfp:
         with st.spinner("Checking alignment with RFP..."):
             rfp_text = extract_text_from_rfp(uploaded_rfp)
             rfp_expectations = extract_rfp_expectations(rfp_text)
             rfp_score, rfp_addressed, rfp_missing = check_expectations_coverage(rfp_expectations, prop_text)
 
-    # Part 2: Proposal Evaluation Against Organizational Standards
-    with st.spinner("Evaluating proposal against organizational standards..."):
-        evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
-        org_score = evaluation['score']
-
-# --- Display Results ---
-if evaluation or rfp_score is not None:
+if evaluation:
     st.subheader("Evaluation Results")
+    st.write("### Section Check")
+    for section, found in evaluation['sections'].items():
+        st.write(f"- **{section}**: {'✅' if found else '❌'}")
 
-    # Part 1: RFP Alignment
+    st.write("### Formatting & Presentation")
+    if evaluation['formatting']['spelling_issues']:
+        st.warning("Spelling Issues Detected:")
+        st.write(", ".join(evaluation['formatting']['spelling_issues']))
+    else:
+        st.success("No major spelling issues detected.")
+
+    if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
+        st.success("Font style and size meet organizational standards (Tenorite or Candara, size 11).")
+    else:
+        st.warning("Font style or font size issue detected.")
+
+    st.write(f"### Overall Score: **{round(evaluation['score'])}%**")
+
+    st.write("### Recommendations")
+    if evaluation['recommendations']:
+        for rec in evaluation['recommendations']:
+            st.warning(rec)
+    else:
+        st.success("Your proposal aligns well with the standards!")
+
     if rfp_score is not None:
         st.write("### RFP Alignment")
         st.info(f"RFP Coverage Score: **{round(rfp_score)}%**")
-
-        if rfp_addressed:
-            st.success("Addressed Expectations from RFP:")
-            for addr in rfp_addressed:
-                st.write(f"- **{addr['expectation']['expectation']}** (Section: {addr['expectation']['section']})")
-
         if rfp_missing:
             st.warning("Missing Expectations from RFP:")
             for miss in rfp_missing:
-                st.write(f"- **{miss['expectation']['expectation']}** (Section: {miss['expectation']['section']})")
+                st.write(f"- {miss}")
 
-    # Part 2: Proposal Evaluation Against Organizational Standards
-    if evaluation:
-        st.write("### Proposal Evaluation Against Organizational Standards")
-        st.info(f"Organizational Standards Score: **{round(org_score)}%**")
-
-        st.write("### Section Check")
-        for section, found in evaluation['sections'].items():
-            st.write(f"- **{section}**: {'✅' if found else '❌'}")
-
-        st.write("### Formatting & Presentation")
-        if evaluation['formatting']['spelling_issues']:
-            st.warning("Spelling Issues Detected:")
-            st.write(", ".join(evaluation['formatting']['spelling_issues']))
-        else:
-            st.success("No major spelling issues detected.")
-
-        if evaluation['formatting']['font_ok'] and evaluation['formatting']['font_size_ok']:
-            st.success("Font style and size meet organizational standards (Tenorite or Candara, size 11).")
-        else:
-            st.warning("Font style or font size issue detected.")
-
-        st.write("### Recommendations")
-        if evaluation['recommendations']:
-            for rec in evaluation['recommendations']:
-                st.warning(rec)
-
-        # Include Missing Expectations in Recommendations
-        if rfp_missing:
-            st.warning("The following expectations from the RFP were not addressed in the proposal:")
-            for miss in rfp_missing:
-                st.write(f"- **{miss['expectation']['expectation']}** (Section: {miss['expectation']['section']})")
-        else:
-            st.success("Your proposal aligns well with the RFP expectations!")
-
-    # Download Evaluation Report
-    word_buffer = create_word_report(
-        evaluation,
-        rfp_score,
-        rfp_missing  # Pass the full `rfp_missing` list directly
-    )
+    word_buffer = create_word_report(evaluation, rfp_score, rfp_missing)
     st.download_button(
         label="Download Evaluation Report (.docx)",
         data=word_buffer,
