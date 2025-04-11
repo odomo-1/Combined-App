@@ -8,6 +8,7 @@ from spellchecker import SpellChecker
 import pandas as pd
 import base64
 from fuzzywuzzy import fuzz
+import fitz  # PyMuPDF for PDF processing
 
 # --- Constants ---
 STANDARD_SECTIONS = [
@@ -30,31 +31,78 @@ def extract_text(file):
         temp_path = os.path.join(tempfile.gettempdir(), file.name)
         with open(temp_path, 'wb') as f:
             f.write(file.read())
+
+        # Validate the file
+        if not is_valid_docx(temp_path):
+            raise ValueError("The uploaded file is not a valid .docx file. Please ensure it is properly formatted.")
+
         doc = Document(temp_path)
         for para in doc.paragraphs:
-            text += para.text + '\n'
+            text += para.text.strip().lower() + '\n'  # Convert to lowercase
     else:
         raise ValueError("Unsupported file type. Please upload a .docx file.")
     return text
 
+def is_valid_docx(file_path):
+    """Check if the file is a valid .docx file."""
+    try:
+        Document(file_path)  # Try opening the file with python-docx
+        return True
+    except Exception:
+        return False
+
 def extract_text_with_formatting(file):
-    """Extract text and formatting attributes from an RFP file (.docx only)."""
+    """Extract text and formatting attributes from an RFP file (.docx or .pdf)."""
     text_with_formatting = []
 
     if file.name.endswith(".docx"):
         temp_path = os.path.join(tempfile.gettempdir(), file.name)
         with open(temp_path, "wb") as f:
             f.write(file.read())
+
+        # Validate the file
+        if not is_valid_docx(temp_path):
+            raise ValueError("The uploaded file is not a valid .docx file. Please ensure it is properly formatted.")
+
         doc = Document(temp_path)
+
+        # Extract text from paragraphs
         for para in doc.paragraphs:
             for run in para.runs:
                 text_with_formatting.append({
-                    "text": run.text.strip(),
+                    "text": run.text.strip().lower(),  # Convert to lowercase
                     "bold": run.bold,
                     "font_size": run.font.size.pt if run.font.size else None
                 })
+
+        # Extract text from tables (if any)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            text_with_formatting.append({
+                                "text": run.text.strip().lower(),  # Convert to lowercase
+                                "bold": run.bold,
+                                "font_size": run.font.size.pt if run.font.size else None
+                            })
+
+    elif file.name.endswith(".pdf"):
+        # Extract plain text from PDF
+        with fitz.open(stream=file.read(), filetype="pdf") as pdf:
+            for page in pdf:
+                for line in page.get_text("dict")["blocks"]:
+                    if "lines" not in line or not line["lines"]:
+                        continue
+                    for span in line["lines"][0]["spans"]:
+                        text_with_formatting.append({
+                            "text": span["text"].strip().lower(),  # Convert to lowercase
+                            "bold": False,  # PDFs don't provide bold information
+                            "font_size": span["size"]  # Font size from PDF
+                        })
+
     else:
-        raise ValueError("Unsupported file type. Please upload a .docx file.")
+        raise ValueError("Unsupported file type. Please upload a .docx or .pdf file.")
 
     return text_with_formatting
 
@@ -113,12 +161,12 @@ def check_expectations_coverage(expectations, proposal_text):
     proposal_paragraphs = proposal_text.split("\n")  # Split proposal into paragraphs
 
     for exp in expectations:
-        exp_text = exp["expectation"].lower()
+        exp_text = exp["expectation"]  # Already in lowercase
         best_match_score = 0
 
         # Compare the expectation with each paragraph in the proposal
         for para in proposal_paragraphs:
-            para_text = para.lower()
+            para_text = para  # Already in lowercase
             match_score = fuzz.partial_ratio(exp_text, para_text)
             if match_score > best_match_score:
                 best_match_score = match_score
@@ -313,7 +361,7 @@ st.write(":orange[Welcome! Upload the Proposal and RFP to evaluate alignment and
 
 # File Uploaders
 uploaded_proposal = st.file_uploader("Upload Proposal (.docx only)", type=["docx"])
-uploaded_rfp = st.file_uploader("Upload RFP (.docx only)", type=["docx"])
+uploaded_rfp = st.file_uploader("Upload RFP (.docx or .pdf)", type=["docx", "pdf"])
 
 # Initialize variables
 evaluation = None
@@ -323,27 +371,41 @@ rfp_addressed = []
 org_score = None
 
 # --- Evaluate Proposal ---
-if uploaded_proposal and st.button("Evaluate Proposal"):
-    st.success("Proposal uploaded successfully.")
-    prop_text = extract_text(uploaded_proposal)
-    doc = Document(uploaded_proposal)
+if uploaded_proposal:
+    try:
+        prop_text = extract_text(uploaded_proposal)
+    except ValueError as e:
+        st.error(f"Error: {e}")
+    except Exception as e:
+        st.error("An unexpected error occurred while processing the file.")
 
-    # Part 1: RFP Alignment
-    if uploaded_rfp:
-        with st.spinner("Checking alignment with RFP..."):
-            try:
-                rfp_text_with_formatting = extract_text_with_formatting(uploaded_rfp)
-                rfp_expectations = extract_rfp_expectations(rfp_text_with_formatting)
-                rfp_score, rfp_addressed, rfp_missing = check_expectations_coverage(rfp_expectations, prop_text)
-            except ValueError as e:
-                st.error(f"Error: {e}")
-            except Exception as e:
-                st.error(f"An unexpected error occurred: {e}")
+    if st.button("Evaluate Proposal"):
+        st.success("Proposal uploaded successfully.")
+        doc = Document(uploaded_proposal)
 
-    # Part 2: Proposal Evaluation Against Organizational Standards
-    with st.spinner("Evaluating proposal against organizational standards..."):
-        evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
-        org_score = evaluation['score']
+        # Part 1: RFP Alignment
+        if uploaded_rfp:
+            with st.spinner("Processing RFP..."):
+                try:
+                    rfp_text_with_formatting = extract_text_with_formatting(uploaded_rfp)
+                    rfp_expectations = extract_rfp_expectations(rfp_text_with_formatting)
+                except ValueError as e:
+                    st.error(f"Error: {e}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
+
+            with st.spinner("Checking alignment with RFP..."):
+                try:
+                    rfp_score, rfp_addressed, rfp_missing = check_expectations_coverage(rfp_expectations, prop_text)
+                except ValueError as e:
+                    st.error(f"Error: {e}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
+
+        # Part 2: Proposal Evaluation Against Organizational Standards
+        with st.spinner("Evaluating proposal against organizational standards..."):
+            evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
+            org_score = evaluation['score']
 
 # --- Display Results ---
 if evaluation or rfp_score is not None:
