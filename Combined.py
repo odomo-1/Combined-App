@@ -54,8 +54,10 @@ def is_valid_docx(file_path):
 def extract_text_with_formatting(file):
     """Extract text and formatting attributes from an RFP file (.docx or .pdf)."""
     text_with_formatting = []
+    is_pdf = False
 
     if file.name.endswith(".docx"):
+        # Extract text paragraph by paragraph for Word documents
         temp_path = os.path.join(tempfile.gettempdir(), file.name)
         with open(temp_path, "wb") as f:
             f.write(file.read())
@@ -68,43 +70,39 @@ def extract_text_with_formatting(file):
 
         # Extract text from paragraphs
         for para in doc.paragraphs:
-            for run in para.runs:
-                text_with_formatting.append({
-                    "text": run.text.strip().lower(),  # Convert to lowercase
-                    "bold": run.bold,
-                    "font_size": run.font.size.pt if run.font.size else None
-                })
+            text_with_formatting.append({
+                "text": para.text.strip().lower(),  # Convert to lowercase
+                "bold": any(run.bold for run in para.runs),  # Check if any run is bold
+                "font_size": None  # Font size is not relevant for paragraph-level extraction
+            })
 
         # Extract text from tables (if any)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        for run in para.runs:
-                            text_with_formatting.append({
-                                "text": run.text.strip().lower(),  # Convert to lowercase
-                                "bold": run.bold,
-                                "font_size": run.font.size.pt if run.font.size else None
-                            })
+                        text_with_formatting.append({
+                            "text": para.text.strip().lower(),  # Convert to lowercase
+                            "bold": any(run.bold for run in para.runs),  # Check if any run is bold
+                            "font_size": None
+                        })
 
     elif file.name.endswith(".pdf"):
-        # Extract plain text from PDF
+        # Extract text line by line for PDFs
+        is_pdf = True
         with fitz.open(stream=file.read(), filetype="pdf") as pdf:
             for page in pdf:
-                for line in page.get_text("dict")["blocks"]:
-                    if "lines" not in line or not line["lines"]:
-                        continue
-                    for span in line["lines"][0]["spans"]:
-                        text_with_formatting.append({
-                            "text": span["text"].strip().lower(),  # Convert to lowercase
-                            "bold": False,  # PDFs don't provide bold information
-                            "font_size": span["size"]  # Font size from PDF
-                        })
+                for line in page.get_text("text").split("\n"):  # Extract lines of text
+                    text_with_formatting.append({
+                        "text": line.strip().lower(),  # Convert to lowercase
+                        "bold": False,  # PDFs don't provide bold information
+                        "font_size": None  # Font size is not relevant for line-level extraction
+                    })
 
     else:
         raise ValueError("Unsupported file type. Please upload a .docx or .pdf file.")
 
-    return text_with_formatting
+    return text_with_formatting, is_pdf
 
 def extract_text_from_rfp(file):
     """Extract text from an RFP file (.docx only)."""
@@ -121,30 +119,37 @@ def extract_text_from_rfp(file):
 
     return text
 
-def extract_rfp_expectations(text_with_formatting):
+def extract_rfp_expectations(text_with_formatting, is_pdf=False):
     """Extract expectations from the RFP with section headings for context."""
     expectations = []
     keywords = ["deliverable", "budget", "timeline", "expected", "scope of work", "methodology", "objective", "goal", "requirements", "outcomes"]
 
+    # Define common section heading keywords
+    section_keywords = [
+        "introduction", "background", "objective", "methodology", "approach",
+        "scope of work", "deliverables", "timeline", "budget", "team", "about"
+    ]
+
     current_section = "General"
     seen_expectations = set()  # To track duplicates
-
-    # Determine the most common font size (assumed to be the body font size)
-    font_sizes = [item["font_size"] for item in text_with_formatting if item["font_size"]]
-    body_font_size = max(set(font_sizes), key=font_sizes.count) if font_sizes else 11  # Default to 11 if no font size info
 
     for item in text_with_formatting:
         text = item["text"]
         bold = item["bold"]
-        font_size = item["font_size"]
 
         if not text:  # Skip empty lines
             continue
 
-        # Detect section headings based on formatting (bold or larger font size than body text)
-        if bold or (font_size and font_size > body_font_size):
-            current_section = text.strip(":").title()
-            continue
+        if is_pdf:
+            # For PDFs: Detect section headings based on keywords only
+            if any(kw in text.lower() for kw in section_keywords):
+                current_section = text.strip(":").title()
+                continue
+        else:
+            # For Word documents: Detect section headings based on bold text or keywords
+            if bold or any(kw in text.lower() for kw in section_keywords):
+                current_section = text.strip(":").title()
+                continue
 
         # Detect expectations based on keywords
         if any(k in text.lower() for k in keywords):
@@ -387,8 +392,8 @@ if uploaded_proposal:
         if uploaded_rfp:
             with st.spinner("Processing RFP..."):
                 try:
-                    rfp_text_with_formatting = extract_text_with_formatting(uploaded_rfp)
-                    rfp_expectations = extract_rfp_expectations(rfp_text_with_formatting)
+                    rfp_text_with_formatting, is_pdf = extract_text_with_formatting(uploaded_rfp)
+                    rfp_expectations = extract_rfp_expectations(rfp_text_with_formatting, is_pdf=is_pdf)
                 except ValueError as e:
                     st.error(f"Error: {e}")
                 except Exception as e:
