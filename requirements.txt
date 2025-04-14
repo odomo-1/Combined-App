@@ -4,3 +4,5 @@ python-docx
 pdfminer.six
 pyspellchecker
 spacy
+fuzzywuzzy
+PyMuPDF
