@@ -9,8 +9,6 @@ import pandas as pd
 import base64
 from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
-import nltk
-nltk.download('punkt')
 from nltk.tokenize import sent_tokenize
 
 # --- Constants ---
