@@ -11,7 +11,13 @@ from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
 import nltk
-nltk.data.path.append(r"C:\Users\Sahel Consulting\OneDrive - Sahel Consulting\Documents\GitHub\Combined-App\nltk_data")
+
+# Dynamically set the path for NLTK data
+nltk_data_path = os.path.join(os.getcwd(), "nltk_data")
+nltk.data.path.append(nltk_data_path)
+
+# Download punkt if not already available
+nltk.download("punkt", download_dir=nltk_data_path)
 
 
 # --- Constants ---
