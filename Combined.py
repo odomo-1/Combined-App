@@ -11,7 +11,7 @@ from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
 import nltk
-nltk_data_path = os.path.join(os.getcwd(), "nltk_data")
+nltk_data_path = os.path.join(os.getcwd(), "punkt")
 nltk.data.path.append(nltk_data_path)
 
 
