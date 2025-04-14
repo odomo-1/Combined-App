@@ -10,6 +10,8 @@ import base64
 from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
+import nltk
+nltk.data.path.append('./nltk_data')
 
 # --- Constants ---
 STANDARD_SECTIONS = [
