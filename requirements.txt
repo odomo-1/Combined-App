@@ -6,3 +6,4 @@ pyspellchecker
 spacy
 fuzzywuzzy
 PyMuPDF
+nltk
