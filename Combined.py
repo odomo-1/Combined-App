@@ -11,7 +11,7 @@ from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
 import nltk
-nltk.data.path.append("C:\Users\Sahel Consulting\OneDrive - Sahel Consulting\Documents\GitHub\Combined-App\nltk_data\tokenizers\punkt\english.pickle")
+nltk.data.path.append(r"C:\Users\Sahel Consulting\OneDrive - Sahel Consulting\Documents\GitHub\Combined-App\nltk_data")
 
 
 # --- Constants ---
