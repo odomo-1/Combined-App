@@ -8,45 +8,38 @@ from spellchecker import SpellChecker
 import pandas as pd
 import base64
 from fuzzywuzzy import fuzz
-import fitz  # PyMuPDF for PDF processing
+import fitz  # PyMuPDF
+import nltk
+nltk.download('punkt')
+from nltk.tokenize import sent_tokenize
 
 # --- Constants ---
 STANDARD_SECTIONS = [
-    "Table of content" or "Table of Contents" or "contents" or "Content",
-    "Introduction",
-    "Background",
-    "Objective",
-    "Methodology" or "Approach" or "technical approach",
-    "Project Team",
-    "About Sahel",
-    "Budget",
-    "Work Plan",
+    "Table of content", "Table of Contents", "contents", "Content",
+    "Introduction", "Background", "Objective",
+    "Methodology", "Approach", "technical approach",
+    "Project Team", "About Sahel", "Budget", "Work Plan"
 ]
 
 # --- Helper Functions ---
 def extract_text(file):
-    """Extract text from a Word document (.docx only)."""
     text = ""
     if file.name.endswith('.docx'):
         temp_path = os.path.join(tempfile.gettempdir(), file.name)
         with open(temp_path, 'wb') as f:
             f.write(file.read())
-
-        # Validate the file
         if not is_valid_docx(temp_path):
-            raise ValueError("The uploaded file is not a valid .docx file. Please ensure it is properly formatted.")
-
+            raise ValueError("The uploaded file is not a valid .docx file.")
         doc = Document(temp_path)
         for para in doc.paragraphs:
-            text += para.text.strip().lower() + '\n'  # Convert to lowercase
+            text += para.text.strip().lower() + '\n'
     else:
-        raise ValueError("Unsupported file type. Please upload a .docx file.")
+        raise ValueError("Unsupported file type.")
     return text
 
 def is_valid_docx(file_path):
-    """Check if the file is a valid .docx file."""
     try:
-        Document(file_path)  # Try opening the file with python-docx
+        Document(file_path)
         return True
     except Exception:
         return False
@@ -71,9 +64,9 @@ def extract_text_with_formatting(file):
         # Extract text from paragraphs
         for para in doc.paragraphs:
             text_with_formatting.append({
-                "text": para.text.strip().lower(),  # Convert to lowercase
-                "bold": any(run.bold for run in para.runs),  # Check if any run is bold
-                "font_size": None  # Font size is not relevant for paragraph-level extraction
+                "text": para.text.strip(),
+                "bold": any(run.bold for run in para.runs),
+                "style": para.style.name if para.style else None
             })
 
         # Extract text from tables (if any)
@@ -82,9 +75,9 @@ def extract_text_with_formatting(file):
                 for cell in row.cells:
                     for para in cell.paragraphs:
                         text_with_formatting.append({
-                            "text": para.text.strip().lower(),  # Convert to lowercase
-                            "bold": any(run.bold for run in para.runs),  # Check if any run is bold
-                            "font_size": None
+                            "text": para.text.strip(),
+                            "bold": any(run.bold for run in para.runs),
+                            "style": para.style.name if para.style else None
                         })
 
     elif file.name.endswith(".pdf"):
@@ -92,11 +85,11 @@ def extract_text_with_formatting(file):
         is_pdf = True
         with fitz.open(stream=file.read(), filetype="pdf") as pdf:
             for page in pdf:
-                for line in page.get_text("text").split("\n"):  # Extract lines of text
+                for line in page.get_text("text").split("\n"):
                     text_with_formatting.append({
-                        "text": line.strip().lower(),  # Convert to lowercase
-                        "bold": False,  # PDFs don't provide bold information
-                        "font_size": None  # Font size is not relevant for line-level extraction
+                        "text": line.strip(),
+                        "bold": False,
+                        "style": None
                     })
 
     else:
@@ -104,120 +97,105 @@ def extract_text_with_formatting(file):
 
     return text_with_formatting, is_pdf
 
-def extract_text_from_rfp(file):
-    """Extract text from an RFP file (.docx only)."""
-    text = ""
-    if file.name.endswith(".docx"):
-        temp_path = os.path.join(tempfile.gettempdir(), file.name)
-        with open(temp_path, "wb") as f:
-            f.write(file.read())
-        doc = Document(temp_path)
-        for para in doc.paragraphs:
-            text += para.text + "\n"
-    else:
-        raise ValueError("Unsupported file type. Please upload a .docx file.")
-
-    return text
+import re
 
 def extract_rfp_expectations(text_with_formatting, is_pdf=False):
-    """Extract expectations from the RFP with section headings for context."""
+    """Extract expectations from the RFP with hierarchical structure and formatting cues."""
     expectations = []
-    keywords = ["deliverable", "budget", "timeline", "expected", "scope of work", "methodology", "objective", "goal", "requirements", "outcomes"]
+    current_section = None
+    current_subsection = None
+    current_content = []
+    section_hierarchy = []
 
-    # Define common section heading keywords
-    section_keywords = [
-        "introduction", "background", "objective", "methodology", "approach",
-        "scope of work", "deliverables", "timeline", "budget", "team", "about"
-    ]
+    # Regex for multi-level numbering (e.g., 1., 1.1, 1.1.1)
+    numbering_pattern = re.compile(r"^\d+(\.\d+)*\s")
 
-    current_section = "General"
-    seen_expectations = set()  # To track duplicates
+    def save_current_section():
+        """Save the current section and its content."""
+        if current_section and current_content:
+            expectations.append({
+                "section": " > ".join(section_hierarchy),
+                "content": " ".join(current_content).strip()
+            })
 
     for item in text_with_formatting:
         text = item["text"]
-        bold = item["bold"]
+        bold = item.get("bold", False)
+        style = item.get("style", "")
+        is_numbered = bool(numbering_pattern.match(text))
 
         if not text:  # Skip empty lines
             continue
 
-        if is_pdf:
-            # For PDFs: Detect section headings based on keywords only
-            if any(kw in text.lower() for kw in section_keywords):
-                current_section = text.strip(":").title()
-                continue
-        else:
-            # For Word documents: Detect section headings based on bold text or keywords
-            if bold or any(kw in text.lower() for kw in section_keywords):
-                current_section = text.strip(":").title()
-                continue
+        # Detect section headers (e.g., bold text, numbered headers, or specific styles)
+        if bold or is_numbered or style in ['Heading 1', 'Heading 2', 'Heading 3']:
+            # Save the current section before moving to the next
+            save_current_section()
+            current_content = []
 
-        # Detect expectations based on keywords
-        if any(k in text.lower() for k in keywords):
-            if text.lower() not in seen_expectations:  # Check for duplicates
-                expectations.append({"section": current_section, "expectation": text})
-                seen_expectations.add(text.lower())
+            # Update the section hierarchy
+            if is_numbered:
+                # Extract the numbering level (e.g., 1., 1.1)
+                numbering = numbering_pattern.match(text).group().strip()
+                level = numbering.count(".") + 1
+
+                # Adjust the hierarchy based on the level
+                while len(section_hierarchy) >= level:
+                    section_hierarchy.pop()
+                section_hierarchy.append(text.strip())
+            else:
+                # Treat bold or styled text as a new top-level section
+                section_hierarchy = [text.strip()]
+
+            current_section = text.strip()
+            continue
+
+        # Combine lines that are part of the same bullet or paragraph
+        if current_content and not text.startswith("-") and not is_numbered:
+            current_content[-1] += " " + text.strip()
+        else:
+            current_content.append(text.strip())
+
+    # Save the last section
+    save_current_section()
 
     return expectations
 
 def check_expectations_coverage(expectations, proposal_text):
-    """Check if expectations from the RFP are addressed in the proposal using fuzzy matching."""
-    missing = []
     addressed = []
-    proposal_paragraphs = proposal_text.split("\n")  # Split proposal into paragraphs
-
+    missing = []
+    proposal_sentences = [s.strip().lower() for s in sent_tokenize(proposal_text) if s.strip()]
     for exp in expectations:
-        exp_text = exp["expectation"]  # Already in lowercase
-        best_match_score = 0
-
-        # Compare the expectation with each paragraph in the proposal
-        for para in proposal_paragraphs:
-            para_text = para  # Already in lowercase
-            match_score = fuzz.partial_ratio(exp_text, para_text)
-            if match_score > best_match_score:
-                best_match_score = match_score
-
-        # Determine if the expectation is addressed based on a threshold
-        if best_match_score >= 70:  # Threshold for alignment
+        exp_text = exp["content"].lower()
+        best_score = max([fuzz.partial_ratio(exp_text, sentence) for sentence in proposal_sentences] or [0])
+        if best_score >= 70:
             addressed.append({"expectation": exp})
         else:
             missing.append({"expectation": exp})
-
     score = (len(addressed) / len(expectations)) * 100 if expectations else 0
     return score, addressed, missing
 
 def evaluate_proposal(text, required_sections, doc):
     lower_text = text.lower()
-
     section_results = {}
     for sec in required_sections:
         found = any(sec.lower() in para.text.lower() for para in doc.paragraphs)
         section_results[sec] = found
-
     section_score = sum(section_results.values())
     section_percentage = (section_score / len(required_sections)) * 100
-
     formatting_results = formatting_check(doc)
-
     total_score = 0
     max_score = 100
-
     methodology_components = [
-        "project kick-off" or "project inception", 
-        "desk review", 
-        "data collection",
-        "data analysis",
-        "data management",
-         "report development",
-        "deliverables" or "output" or "outputs"
+        "project kick-off", "project inception", "desk review",
+        "data collection", "data analysis", "data management",
+        "report development", "deliverables", "output", "outputs"
     ]
-
     section_weight = 0.35
     total_score += section_percentage * section_weight
-
     spelling_weight = 0.20
     spell_score = 100 if not formatting_results['spelling_issues'] else max(0, 100 - len(formatting_results['spelling_issues']) * 10)
     total_score += spell_score * spelling_weight
-
     methodology_weight = 0.25
     methodology_text = "\n".join(
         para.text for para in doc.paragraphs if "methodology" in para.text.lower() or "approach" in para.text.lower()
@@ -225,13 +203,11 @@ def evaluate_proposal(text, required_sections, doc):
     missing_components = [comp for comp in methodology_components if comp not in methodology_text]
     methodology_score = 100 if not missing_components else 100 - (len(missing_components) * 10)
     total_score += methodology_score * methodology_weight
-
     formatting_weight = 0.20
     font_style_score = 100 if formatting_results['font_ok'] else 0
     font_size_score = 100 if formatting_results['font_size_ok'] else 0
     formatting_score = (font_style_score + font_size_score) / 2
     total_score += round(formatting_score * formatting_weight)
-
     missing_sections = [sec for sec, present in section_results.items() if not present]
     recommendations = []
     if missing_sections:
@@ -244,7 +220,6 @@ def evaluate_proposal(text, required_sections, doc):
         recommendations.append("Body text should use font size 11.")
     if missing_components:
         recommendations.append(f"The methodology section is missing the following components: {', '.join(set(missing_components)).title()}")
-
     return {
         'sections': section_results,
         'score': total_score,
@@ -258,16 +233,12 @@ def formatting_check(doc):
     words = re.findall(r'\b\w+\b', text.lower())
     misspelled = spell.unknown(words)
     spelling_issues = list(misspelled)[:15]
-
-    # Determine the most common font size (assumed to be the body font size)
     font_sizes = []
     for para in doc.paragraphs:
         for run in para.runs:
             if run.font.size:
                 font_sizes.append(run.font.size.pt)
-
-    body_font_size = max(set(font_sizes), key=font_sizes.count) if font_sizes else 11  # Default to 11 if no font size info
-
+    body_font_size = max(set(font_sizes), key=font_sizes.count) if font_sizes else 11
     font_ok = True
     font_size_ok = True
     for para in doc.paragraphs:
@@ -279,7 +250,6 @@ def formatting_check(doc):
                     font_size_ok = False
         if not font_ok or not font_size_ok:
             break
-
     return {
         "spelling_issues": spelling_issues,
         "font_ok": font_ok,
@@ -289,13 +259,9 @@ def formatting_check(doc):
 def create_word_report(evaluation, rfp_score=None, rfp_missing=None):
     doc = Document()
     doc.add_heading("Proposal Evaluation Report", level=1)
-
-    # Section Check
     doc.add_heading("Section Check", level=2)
     for section, found in evaluation['sections'].items():
         doc.add_paragraph(f"{section}: {'Present' if found else 'Missing'}")
-
-    # Formatting & Presentation
     doc.add_heading("Formatting & Presentation", level=2)
     if evaluation['formatting']['spelling_issues']:
         doc.add_paragraph("Spelling Issues Detected:")
@@ -306,44 +272,34 @@ def create_word_report(evaluation, rfp_score=None, rfp_missing=None):
         doc.add_paragraph("Font style and size meet organizational standards (Tenorite or Candara, size 11).")
     else:
         doc.add_paragraph("Font style does not match standard (Tenorite or Candara) or font size is not 11 in body text.")
-
-    # Overall Score
     doc.add_heading("Overall Score", level=2)
     doc.add_paragraph(f"{evaluation['score']}%")
-
-    # Recommendations
     doc.add_heading("Recommendations", level=2)
     if evaluation['recommendations']:
         for rec in evaluation['recommendations']:
             doc.add_paragraph(f"- {rec}")
     else:
         doc.add_paragraph("All criteria met. Great job!")
-
-    # Include Missing Expectations in Recommendations
     if rfp_score is not None and rfp_missing:
         doc.add_heading("Missing RFP Expectations", level=2)
         doc.add_paragraph("The following expectations from the RFP were not addressed in the proposal:")
         for miss in rfp_missing:
-            # Handle cases where `miss` is not a dictionary
             if isinstance(miss, dict) and 'expectation' in miss and 'section' in miss['expectation']:
-                doc.add_paragraph(f"- {miss['expectation']['expectation']} (Section: {miss['expectation']['section']})")
+                doc.add_paragraph(f"- {miss['expectation']['content']} (Section: {miss['expectation']['section']})")
             else:
-                doc.add_paragraph(f"- {miss}")  # Fallback for unexpected data
-
+                doc.add_paragraph(f"- {miss}")
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
 def truncate_text(text, max_words=25):
-    """Truncate text to a maximum number of words for display purposes."""
     words = text.split()
     return " ".join(words[:max_words]) + ("..." if len(words) > max_words else "")
 
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", layout="wide")
 
-# Background Image
 current_dir = os.path.dirname(__file__)
 with open(os.path.join(current_dir, "background.jpg"), "rb") as file:
     encoded_string = base64.b64encode(file.read()).decode()
@@ -364,18 +320,15 @@ st.image("Sahel Consulting (Official).png", width=300)
 st.title(":green[Strategy Unit Toolkit]")
 st.write(":orange[Welcome! Upload the Proposal and RFP to evaluate alignment and quality.]")
 
-# File Uploaders
 uploaded_proposal = st.file_uploader("Upload Proposal (.docx only)", type=["docx"])
 uploaded_rfp = st.file_uploader("Upload RFP (.docx or .pdf)", type=["docx", "pdf"])
 
-# Initialize variables
 evaluation = None
 rfp_score = None
 rfp_missing = []
 rfp_addressed = []
 org_score = None
 
-# --- Evaluate Proposal ---
 if uploaded_proposal:
     try:
         prop_text = extract_text(uploaded_proposal)
@@ -388,7 +341,6 @@ if uploaded_proposal:
         st.success("Proposal uploaded successfully.")
         doc = Document(uploaded_proposal)
 
-        # Part 1: RFP Alignment
         if uploaded_rfp:
             with st.spinner("Processing RFP..."):
                 try:
@@ -407,16 +359,13 @@ if uploaded_proposal:
                 except Exception as e:
                     st.error(f"An unexpected error occurred: {e}")
 
-        # Part 2: Proposal Evaluation Against Organizational Standards
         with st.spinner("Evaluating proposal against organizational standards..."):
             evaluation = evaluate_proposal(prop_text, STANDARD_SECTIONS, doc)
             org_score = evaluation['score']
 
-# --- Display Results ---
 if evaluation or rfp_score is not None:
     st.subheader("Evaluation Results")
 
-    # Part 1: RFP Alignment
     if rfp_score is not None:
         st.write("### RFP Alignment")
         st.info(f"RFP Coverage Score: **{round(rfp_score)}%**")
@@ -424,16 +373,15 @@ if evaluation or rfp_score is not None:
         if rfp_addressed:
             st.success("Addressed Expectations from RFP:")
             for addr in rfp_addressed:
-                truncated = truncate_text(addr['expectation']['expectation'])
+                truncated = truncate_text(addr['expectation']['content'])
                 st.write(f"- **{truncated}** (Section: {addr['expectation']['section']})")
 
         if rfp_missing:
             st.warning("Missing Expectations from RFP:")
             for miss in rfp_missing:
-                truncated = truncate_text(miss['expectation']['expectation'])
+                truncated = truncate_text(miss['expectation']['content'])
                 st.write(f"- **{truncated}** (Section: {miss['expectation']['section']})")
 
-    # Part 2: Proposal Evaluation Against Organizational Standards
     if evaluation:
         st.write("### Proposal Evaluation Against Organizational Standards")
         st.info(f"Organizational Standards Score: **{round(org_score)}%**")
@@ -457,24 +405,26 @@ if evaluation or rfp_score is not None:
         st.write("### Recommendations")
         if evaluation['recommendations']:
             for rec in evaluation['recommendations']:
-                st.warning(rec)
+                truncated_rec = truncate_text(rec)  # Truncate the recommendation
+                st.warning(truncated_rec)
+        else:
+            st.success("All criteria met. Great job!")
 
-        # Include Missing Expectations in Recommendations
         if rfp_missing:
             st.warning("The following expectations from the RFP were not addressed in the proposal:")
             for miss in rfp_missing:
-                st.write(f"- **{miss['expectation']['expectation']}** (Section: {miss['expectation']['section']})")
+                st.write(f"- **{miss['expectation']['content']}** (Section: {miss['expectation']['section']})")
         else:
             st.success("Your proposal aligns well with the RFP expectations!")
 
-    # Download Evaluation Report
     word_buffer = create_word_report(
         evaluation,
         rfp_score,
-        rfp_missing  # Pass the full `rfp_missing` list directly
+        rfp_missing
     )
     st.download_button(
         label="Download Evaluation Report (.docx)",
         data=word_buffer,
         file_name="proposal_evaluation.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"    )
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
