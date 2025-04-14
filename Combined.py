@@ -11,7 +11,7 @@ from fuzzywuzzy import fuzz
 import fitz  # PyMuPDF
 from nltk.tokenize import sent_tokenize
 import nltk
-nltk.data.path.append('./nltk_data')
+nltk.data.path.append('./punkt')
 
 # --- Constants ---
 STANDARD_SECTIONS = [
