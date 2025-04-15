@@ -19,10 +19,18 @@ nltk.data.path.append(nltk_data_path)
 
 # --- Constants ---
 STANDARD_SECTIONS = [
-    "Table of content", "Table of Contents", "contents", "Content",
+    "Table of content" or "Table of Contents" or "contents" or "Content",
     "Introduction", "Background", "Objective",
-    "Methodology", "Approach", "technical approach",
+    "Methodology"or "Approach" or "technical approach",
     "Project Team", "About Sahel", "Budget", "Work Plan"
+]
+
+FILTER_KEYWORDS = ["Scope", "Description", "Background", "Objectives","expected deliverables","objective", "Goals", "Deliverables","output", "outcome" , "Statement of Work","proposal format",
+    "Methodology", "Approach","activities", "Strategy", "Implementation", "Framework", "Techniques",
+    "Eligibility", "team", "Eligible", "Applicants", "Who can apply", "Requirements", "Qualifications", "Criteria",
+    "Budget", "Funding", "Cost", "Financial", "Expenses",
+    "Deadline", "Submission", "Due Date", "Closing Date", "duration",
+    "Selection", "Weighting", "Judging", "Metrics","Decision"
 ]
 
 # --- Helper Functions ---
@@ -166,16 +174,19 @@ def extract_rfp_expectations(text_with_formatting, is_pdf=False):
     return expectations
 
 def check_expectations_coverage(expectations, proposal_text):
+    """Check if expectations from the RFP are addressed in the proposal using fuzzy matching."""
     addressed = []
     missing = []
     proposal_sentences = [s.strip().lower() for s in sent_tokenize(proposal_text) if s.strip()]
+
     for exp in expectations:
         exp_text = exp["content"].lower()
         best_score = max([fuzz.partial_ratio(exp_text, sentence) for sentence in proposal_sentences] or [0])
-        if best_score >= 70:
+        if best_score >= 70:  # Threshold for matching
             addressed.append({"expectation": exp})
         else:
-            missing.append({"expectation": exp})
+            missing.append({"expectation": exp})  # Add unmatched expectations to the missing list
+
     score = (len(addressed) / len(expectations)) * 100 if expectations else 0
     return score, addressed, missing
 
@@ -301,6 +312,15 @@ def truncate_text(text, max_words=25):
     words = text.split()
     return " ".join(words[:max_words]) + ("..." if len(words) > max_words else "")
 
+def filter_sections_by_keywords(extracted_sections, keywords):
+    """Filter sections based on the presence of specific keywords."""
+    filtered_sections = []
+    for section in extracted_sections:
+        section_content = section["content"].lower()
+        if any(keyword in section_content for keyword in keywords):
+            filtered_sections.append(section)
+    return filtered_sections
+
 # --- Streamlit Interface ---
 st.set_page_config(page_title="Strategy Unit Toolkit", page_icon=":briefcase:", layout="wide")
 
@@ -350,6 +370,10 @@ if uploaded_proposal:
                 try:
                     rfp_text_with_formatting, is_pdf = extract_text_with_formatting(uploaded_rfp)
                     rfp_expectations = extract_rfp_expectations(rfp_text_with_formatting, is_pdf=is_pdf)
+
+                    # Filter sections by keywords
+                    rfp_expectations = filter_sections_by_keywords(rfp_expectations, FILTER_KEYWORDS)
+
                 except ValueError as e:
                     st.error(f"Error: {e}")
                 except Exception as e:
@@ -374,17 +398,22 @@ if evaluation or rfp_score is not None:
         st.write("### RFP Alignment")
         st.info(f"RFP Coverage Score: **{round(rfp_score)}%**")
 
-        if rfp_addressed:
-            st.success("Addressed Expectations from RFP:")
-            for addr in rfp_addressed:
-                truncated = truncate_text(addr['expectation']['content'])
-                st.write(f"- **{truncated}** (Section: {addr['expectation']['section']})")
+        if rfp_score == 0:
+            st.warning("No expectations from the RFP were addressed in the proposal.")
+        else:
+            if rfp_addressed:
+                st.success("Addressed Expectations from RFP:")
+                for addr in rfp_addressed:
+                    truncated = truncate_text(addr['expectation']['content'])
+                    st.write(f"- **{truncated}** (Section: {addr['expectation']['section']})")
 
-        if rfp_missing:
-            st.warning("Missing Expectations from RFP:")
-            for miss in rfp_missing:
-                truncated = truncate_text(miss['expectation']['content'])
-                st.write(f"- **{truncated}** (Section: {miss['expectation']['section']})")
+            if rfp_missing:
+                st.warning("The following expectations from the RFP were not addressed in the proposal:")
+                for miss in rfp_missing:
+                    truncated = truncate_text(miss['expectation']['content'])  # Truncate the missing expectation content
+                    st.write(f"- **{truncated}** (Section: {miss['expectation']['section']})")
+            else:
+                st.success("Your proposal aligns well with the RFP expectations!")
 
     if evaluation:
         st.write("### Proposal Evaluation Against Organizational Standards")
@@ -411,13 +440,16 @@ if evaluation or rfp_score is not None:
             for rec in evaluation['recommendations']:
                 truncated_rec = truncate_text(rec)  # Truncate the recommendation
                 st.warning(truncated_rec)
-        else:
-            st.success("All criteria met. Great job!")
+
+        # Add recommendation if RFP score is 0%
+        if rfp_score == 0:
+            st.warning(truncate_text("No expectations from the RFP were addressed in the proposal."))
 
         if rfp_missing:
             st.warning("The following expectations from the RFP were not addressed in the proposal:")
             for miss in rfp_missing:
-                st.write(f"- **{miss['expectation']['content']}** (Section: {miss['expectation']['section']})")
+                truncated = truncate_text(miss['expectation']['content'])  # Truncate the missing expectation content
+                st.write(f"- **{truncated}** (Section: {miss['expectation']['section']})")
         else:
             st.success("Your proposal aligns well with the RFP expectations!")
 
